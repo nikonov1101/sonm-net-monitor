@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -9,7 +11,9 @@ import (
 	"crypto/ecdsa"
 	"strings"
 
+	"encoding/json"
 	"github.com/ethereum/go-ethereum/whisper/whisperv2"
+	geo "github.com/oschwald/geoip2-golang"
 	cli "github.com/sonm-io/core/cmd/cli/commands"
 	"github.com/sonm-io/core/common"
 	frd "github.com/sonm-io/core/fusrodah/miner"
@@ -23,16 +27,23 @@ const (
 )
 
 type (
+	pos struct {
+		Country string  `json:"country"`
+		City    string  `json:"city"`
+		Lat     float64 `json:"lat"`
+		Lon     float64 `json:"lon"`
+	}
+
 	hub struct {
-		addr    string
-		id      string
-		pubKey  *ecdsa.PublicKey
-		pinged  bool
-		workers []*worker
+		Addr      string    `json:"Addr"`
+		Available bool      `json:"available"`
+		Workers   []*worker `json:"workers"`
+		Pos       *pos      `json:"geo"`
+		pubKey    *ecdsa.PublicKey
 	}
 
 	worker struct {
-		addr string
+		Addr string `json:"addr"`
 	}
 )
 
@@ -41,14 +52,21 @@ func (h *hub) isAnon() bool {
 }
 
 func (h *hub) getClientAddr() string {
-	ipport := strings.Split(h.addr, ":")
-	if len(ipport) == 2 {
-		// use default client port
-		return ipport[0] + ":10001"
+	ip := h.getIP()
+	if ip == nil {
+		return ""
 	}
 
-	log.Printf("Cannot parse address: %s\r\n", h.addr)
-	return ""
+	return ip.String() + ":10001"
+}
+
+func (h *hub) getIP() net.IP {
+	ipport := strings.Split(h.Addr, ":")
+	if len(ipport) != 2 {
+		return nil
+	}
+
+	return net.ParseIP(ipport[0])
 }
 
 func (h *hub) toPtr() *hub {
@@ -66,11 +84,11 @@ func (ns *nodeStorage) PutHub(h *hub) {
 	ns.mx.Lock()
 	defer ns.mx.Unlock()
 
-	log.Printf("[STORAGE] hub %s has %d workers\r\n", h.addr, len(h.workers))
+	log.Printf("[STORAGE] hub %s has %d Workers\r\n", h.Addr, len(h.Workers))
 
-	_, ok := ns.hubs[h.addr]
+	_, ok := ns.hubs[h.Addr]
 	if !ok {
-		ns.hubs[h.addr] = h
+		ns.hubs[h.Addr] = h
 	}
 }
 
@@ -90,12 +108,12 @@ func (ns *nodeStorage) GetWorkerForHub(h hub) []*worker {
 	ns.mx.RLock()
 	defer ns.mx.RUnlock()
 
-	hb, ok := ns.hubs[h.addr]
+	hb, ok := ns.hubs[h.Addr]
 	if !ok {
 		return nil
 	}
 
-	return hb.workers
+	return hb.Workers
 }
 
 func (ns *nodeStorage) GetHubCount() int {
@@ -111,10 +129,18 @@ func (ns *nodeStorage) GetWorkerCount() int {
 
 	total := 0
 	for _, hb := range ns.hubs {
-		total += len(hb.workers)
+		total += len(hb.Workers)
 	}
 
 	return total
+}
+
+func (ns *nodeStorage) dump() []byte {
+	ns.mx.RLock()
+	defer ns.mx.RUnlock()
+
+	b, _ := json.MarshalIndent(ns.hubs, "", "    ")
+	return b
 }
 
 // todo: implement cleanup for expired nodes
@@ -132,10 +158,10 @@ func (ns *nodeStorage) GetWorkerCount() int {
 //		case <-t.C:
 //			for h := range ns.hubs {
 //				if h.ts.Before(deadline) {
-//					log.Printf("Deadlive reached for hub = %s\r\n", h.addr)
+//					log.Printf("Deadlive reached for hub = %s\r\n", h.Addr)
 //					// todo: remove node
 //				} else {
-//					log.Printf("Hub %s has at least %s to expiration\r\n", h.addr, h.ts.Sub(deadline))
+//					log.Printf("Hub %s has at least %s to expiration\r\n", h.Addr, h.ts.Sub(deadline))
 //				}
 //			}
 //		}
@@ -172,7 +198,7 @@ func startHubDiscovery(p2p *frd.Server, storage *nodeStorage) {
 	p2p.Frd.AddHandling(nil, nil, func(msg *whisperv2.Message) {
 		hubKey := msg.Recover()
 		h := &hub{
-			addr:   string(msg.Payload),
+			Addr:   string(msg.Payload),
 			pubKey: hubKey,
 		}
 		hubChan <- h
@@ -194,15 +220,21 @@ func startHubDiscovery(p2p *frd.Server, storage *nodeStorage) {
 			p2p.Frd.Send(p2p.GetPubKeyString(), true, common.TopicHubDiscover)
 		case <-show.C:
 			log.Printf("[!!!] Hubs: %d  Wrk: %d\r\n\r\n", storage.GetHubCount(), storage.GetWorkerCount())
+			log.Println(string(storage.dump()))
 		}
 	}
 }
 
 func checkAndStore(h *hub, storage *nodeStorage) {
 	isAvailable := checkHubAvailability(h)
-	h.pinged = isAvailable
+	h.Available = isAvailable
 	if isAvailable {
-		h.workers = queryWorkers(h)
+		h.Workers = queryWorkers(h)
+	}
+
+	// todo: prevent double querying
+	if pos, err := queryGeoIP(h.getIP().String()); err == nil {
+		h.Pos = pos
 	}
 
 	storage.PutHub(h)
@@ -247,10 +279,36 @@ func queryWorkers(h *hub) []*worker {
 
 	wrk := []*worker{}
 	for addr := range list.Info {
-		wrk = append(wrk, &worker{addr: addr})
+		wrk = append(wrk, &worker{Addr: addr})
 	}
 
 	return wrk
+}
+
+func queryGeoIP(s string) (*pos, error) {
+	// todo: open db once at application start 
+	db, err := geo.Open("geo.mmdb")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return nil, fmt.Errorf("Cannot parse \"%s\" to net.IP", s)
+	}
+
+	rec, err := db.City(ip)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pos{
+		Lat:     rec.Location.Latitude,
+		Lon:     rec.Location.Longitude,
+		City:    rec.City.Names["en"],
+		Country: rec.Country.Names["en"],
+	}, nil
 }
 
 func main() {
