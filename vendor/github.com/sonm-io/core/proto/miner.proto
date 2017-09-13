@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+import "insonmnia.proto";
+import "capabilities.proto";
+
+package sonm;
+
+service Miner{
+    rpc Ping(PingRequest) returns (PingReply) {}
+    rpc Info(MinerInfoRequest) returns (InfoReply) {}
+    rpc Handshake(MinerHandshakeRequest) returns (MinerHandshakeReply) {}
+
+    rpc Start(MinerStartRequest) returns (MinerStartReply) {}
+    rpc Stop(StopTaskRequest) returns (StopTaskReply) {}
+
+    rpc TasksStatus(stream MinerStatusMapRequest) returns (stream StatusMapReply) {}
+    rpc TaskDetails(TaskStatusRequest) returns (TaskStatusReply) {}
+
+    rpc TaskLogs(TaskLogsRequest) returns (stream TaskLogsChunk) {}
+}
+
+message MinerInfoRequest {
+}
+
+message MinerHandshakeRequest {
+    string hub = 1;
+}
+
+enum NATType {
+    NONE = 0;
+    BLOCKED = 1;
+    FULL = 2;
+    SYMMETRIC = 3;
+    RESTRICTED = 4;
+    PORT_RESTRICTED = 5;
+    SYMMETRIC_UDP_FIREWALL = 6;
+    UNKNOWN = 7;
+}
+
+message MinerHandshakeReply {
+    string miner = 1;
+    Capabilities capabilities = 2;
+    NATType natType = 3;
+}
+
+message MinerStartRequest{
+    string id = 1;
+    string registry = 2;
+    string image = 3;
+    string auth = 4;
+    ContainerRestartPolicy restartPolicy = 5;
+    ContainerResources resources = 6;
+    string PublicKeyData = 7;
+    bool commitOnStop = 8;
+    map<string, string> env = 9;
+}
+
+message MinerStartReply {
+    string container = 1;
+    message port {
+        string IP = 1;
+        string port = 2;
+    }
+    map<string, port> Ports = 2;
+}
+
+message MinerStatusMapRequest {}

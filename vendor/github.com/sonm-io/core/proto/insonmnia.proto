@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+import "capabilities.proto";
+
+package sonm;
+
+message PingRequest {}
+
+message PingReply {
+    string status = 1;
+}
+
+message CPUUsage {
+    uint64 total = 1;
+}
+
+message MemoryUsage {
+    uint64 maxUsage = 1;
+}
+
+message NetworkUsage {
+    uint64 txBytes = 1;
+    uint64 rxBytes = 2;
+    uint64 txPackets = 3;
+    uint64 rxPackets = 4;
+    uint64 txErrors = 5;
+    uint64 rxErrors = 6;
+    uint64 txDropped = 7;
+    uint64 rxDropped = 8;
+}
+
+message ResourceUsage {
+    CPUUsage cpu = 1;
+    MemoryUsage memory = 2;
+    map<string, NetworkUsage> network = 3;
+}
+
+message InfoReply {
+    map<string, ResourceUsage> usage = 1;
+    string name = 2;
+    Capabilities capabilities = 3;
+}
+
+message StopTaskRequest {
+    string id = 1;
+}
+
+message StopTaskReply {}
+
+message TaskStatusRequest {
+    string id = 1;
+}
+
+message TaskStatusReply {
+    enum Status {
+        UNKNOWN = 0;
+        SPOOLING = 1;
+        SPAWNING = 2;
+        RUNNING = 3;
+        FINISHED = 4;
+        BROKEN = 5;
+    }
+    Status status = 1;
+    string imageName = 2;
+    string ports = 3;
+    uint64 uptime = 4;
+    ResourceUsage usage = 5;
+    //ContainerResources resources = 5;
+}
+
+message StatusMapReply {
+    map<string, TaskStatusReply> statuses = 1;
+}
+
+message ContainerResources {
+    int64 memory = 1;
+    int64 nanoCPUs = 2;
+}
+
+message ContainerRestartPolicy {
+    string name = 1;
+    uint32 maximumRetryCount = 2;
+}
+
+message TaskLogsRequest {
+    enum Type {
+        STDOUT = 0;
+        STDERR = 1;
+        BOTH = 2;
+    }
+    Type type = 1;
+    string id = 2;
+    string since = 3;
+    bool addTimestamps = 4;
+    bool Follow = 5;
+    string Tail = 6;
+    bool Details = 7;
+}
+
+message TaskLogsChunk {
+    bytes data = 1;
+}
