@@ -26,6 +26,8 @@ const (
 	//hubInfoCleanupPeriod    = 30 * time.Second
 )
 
+var geodb *geo.Reader
+
 type (
 	pos struct {
 		Country string  `json:"country"`
@@ -84,11 +86,19 @@ func (ns *nodeStorage) PutHub(h *hub) {
 	ns.mx.Lock()
 	defer ns.mx.Unlock()
 
-	log.Printf("[STORAGE] hub %s has %d Workers\r\n", h.Addr, len(h.Workers))
-
-	_, ok := ns.hubs[h.Addr]
+	h2, ok := ns.hubs[h.Addr]
 	if !ok {
+		// if hub doesn't exists in storage - query for geoIP and save it
+		if pos, err := queryGeoIP(h.getIP().String()); err == nil {
+			h.Pos = pos
+		}
 		ns.hubs[h.Addr] = h
+	} else {
+		// if Hub already present in storage - update fields that can be changed and save record back
+		h2.Workers = h.Workers
+		h2.Available = h.Available
+		h2.pubKey = h.pubKey
+		ns.hubs[h2.Addr] = h2
 	}
 }
 
@@ -173,7 +183,10 @@ func newNodeStorage() *nodeStorage {
 		mx:   sync.RWMutex{},
 		hubs: make(map[string]*hub),
 	}
+
+	// todo:
 	// go ns.cleanExpiredNodes()
+	// go sendStorageStateToInflux()
 
 	return ns
 }
@@ -232,11 +245,6 @@ func checkAndStore(h *hub, storage *nodeStorage) {
 		h.Workers = queryWorkers(h)
 	}
 
-	// todo: prevent double querying
-	if pos, err := queryGeoIP(h.getIP().String()); err == nil {
-		h.Pos = pos
-	}
-
 	storage.PutHub(h)
 }
 
@@ -285,20 +293,22 @@ func queryWorkers(h *hub) []*worker {
 	return wrk
 }
 
-func queryGeoIP(s string) (*pos, error) {
-	// todo: open db once at application start 
+func initGeoDB() *geo.Reader {
 	db, err := geo.Open("geo.mmdb")
 	if err != nil {
-		return nil, err
+		panic("Cannot open geoip db: " + err.Error())
 	}
-	defer db.Close()
 
+	return db
+}
+
+func queryGeoIP(s string) (*pos, error) {
 	ip := net.ParseIP(s)
 	if ip == nil {
 		return nil, fmt.Errorf("Cannot parse \"%s\" to net.IP", s)
 	}
 
-	rec, err := db.City(ip)
+	rec, err := geodb.City(ip)
 	if err != nil {
 		return nil, err
 	}
@@ -314,6 +324,9 @@ func queryGeoIP(s string) (*pos, error) {
 func main() {
 	p2p := startP2PServer()
 	storage := newNodeStorage()
+
+	geodb = initGeoDB()
+	defer geodb.Close()
 
 	startHubDiscovery(p2p, storage)
 }
