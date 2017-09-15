@@ -326,6 +326,24 @@
 			"revisionTime": "2017-09-11T07:38:22Z"
 		},
 		{
+			"checksumSHA1": "2SyY8LpzxtFHo9yLZp4n1SdC65A=",
+			"path": "github.com/influxdata/influxdb/client/v2",
+			"revision": "f3f30726d822c4be8cd00137ba66b6e4fd68cca1",
+			"revisionTime": "2017-09-12T16:48:34Z"
+		},
+		{
+			"checksumSHA1": "/gXwvTXF7zn5GDNxGHzBVm7/emQ=",
+			"path": "github.com/influxdata/influxdb/models",
+			"revision": "f3f30726d822c4be8cd00137ba66b6e4fd68cca1",
+			"revisionTime": "2017-09-12T16:48:34Z"
+		},
+		{
+			"checksumSHA1": "H/J/qLqzUONXIecHHKtVZmxJZZA=",
+			"path": "github.com/influxdata/influxdb/pkg/escape",
+			"revision": "f3f30726d822c4be8cd00137ba66b6e4fd68cca1",
+			"revisionTime": "2017-09-12T16:48:34Z"
+		},
+		{
 			"checksumSHA1": "vTGKMIfiMwz43y5bsgx9PrL+AVw=",
 			"origin": "github.com/ethereum/go-ethereum/vendor/github.com/jackpal/go-nat-pmp",
 			"path": "github.com/jackpal/go-nat-pmp",
@@ -338,6 +356,12 @@
 			"path": "github.com/jinzhu/configor",
 			"revision": "a6399704d259e9ff8ffd7224d804ffdcf49aa6c1",
 			"revisionTime": "2017-09-11T07:38:22Z"
+		},
+		{
+			"checksumSHA1": "sykJPAbMuFgLTEZzoAPIqo/7qiA=",
+			"path": "github.com/mmcloughlin/geohash",
+			"revision": "71fdd146e641f67705553200404b1bc426871d7e",
+			"revisionTime": "2017-08-07T20:29:19Z"
 		},
 		{
 			"checksumSHA1": "OUupkCHnh8e3RHRNcMFqQJqhaQI=",
