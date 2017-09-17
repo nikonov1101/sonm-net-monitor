@@ -13,8 +13,6 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/whisper/whisperv2"
-	inf "github.com/influxdata/influxdb/client/v2"
-	"github.com/mmcloughlin/geohash"
 	geo "github.com/oschwald/geoip2-golang"
 	cli "github.com/sonm-io/core/cmd/cli/commands"
 	"github.com/sonm-io/core/common"
@@ -24,20 +22,13 @@ import (
 const (
 	hubRequestTimeout = 10 * time.Second
 	discoveryPeriod   = 30 * time.Second
-	// todo: read this params from config or cli flag
-	influxdbAddr       = "http://10.0.1.1:8086"
-	influxdbDB         = "sonm"
-	influxdbUser       = "admin"
-	influxdbPassword   = "admin"
-	influxdbSavePeriod = 1 * time.Minute
 
 	//hubInfoExpirationPeriod = 1 * time.Minute
 	//hubInfoCleanupPeriod    = 30 * time.Second
 )
 
 var (
-	geodb     *geo.Reader
-	infClient inf.Client
+	geodb *geo.Reader
 )
 
 type (
@@ -89,12 +80,20 @@ func (h *hub) toPtr() *hub {
 	return h2
 }
 
-type nodeStorage struct {
+type NodeStorage interface {
+	StoreHub(*hub) error
+	GetHubs() ([]*hub, error)
+	GetHubsCount() (int, error)
+	GetWorkersCount() (int, error)
+}
+
+// inMemNodeStorage implements NodeStorage interface
+type inMemNodeStorage struct {
 	mx   sync.RWMutex
 	hubs map[string]*hub
 }
 
-func (ns *nodeStorage) PutHub(h *hub) {
+func (ns *inMemNodeStorage) StoreHub(h *hub) error {
 	ns.mx.Lock()
 	defer ns.mx.Unlock()
 
@@ -112,9 +111,11 @@ func (ns *nodeStorage) PutHub(h *hub) {
 		h2.pubKey = h.pubKey
 		ns.hubs[h2.Addr] = h2
 	}
+
+	return nil
 }
 
-func (ns *nodeStorage) GetHubs() []*hub {
+func (ns *inMemNodeStorage) GetHubs() ([]*hub, error) {
 	ns.mx.RLock()
 	defer ns.mx.RUnlock()
 
@@ -123,29 +124,29 @@ func (ns *nodeStorage) GetHubs() []*hub {
 		hubs = append(hubs, hu)
 	}
 
-	return hubs
+	return hubs, nil
 }
 
-func (ns *nodeStorage) GetWorkerForHub(h hub) []*worker {
+func (ns *inMemNodeStorage) GetHubsCount() (int, error) {
 	ns.mx.RLock()
 	defer ns.mx.RUnlock()
 
-	hb, ok := ns.hubs[h.Addr]
-	if !ok {
-		return nil
+	return len(ns.hubs), nil
+}
+
+func (ns *inMemNodeStorage) GetWorkersCount() (int, error) {
+	ns.mx.RLock()
+	defer ns.mx.RUnlock()
+
+	total := 0
+	for _, hb := range ns.hubs {
+		total += len(hb.Workers)
 	}
 
-	return hb.Workers
+	return total, nil
 }
 
-func (ns *nodeStorage) getHubCount() int {
-	ns.mx.RLock()
-	defer ns.mx.RUnlock()
-
-	return len(ns.hubs)
-}
-
-func (ns *nodeStorage) getAvailableHubCount() int {
+func (ns *inMemNodeStorage) getAvailableHubCount() int {
 	ns.mx.RLock()
 	defer ns.mx.RUnlock()
 
@@ -159,19 +160,7 @@ func (ns *nodeStorage) getAvailableHubCount() int {
 	return c
 }
 
-func (ns *nodeStorage) getWorkerCount() int {
-	ns.mx.RLock()
-	defer ns.mx.RUnlock()
-
-	total := 0
-	for _, hb := range ns.hubs {
-		total += len(hb.Workers)
-	}
-
-	return total
-}
-
-func (ns *nodeStorage) dump() []byte {
+func (ns *inMemNodeStorage) dump() []byte {
 	ns.mx.RLock()
 	defer ns.mx.RUnlock()
 
@@ -179,87 +168,8 @@ func (ns *nodeStorage) dump() []byte {
 	return b
 }
 
-func (ns *nodeStorage) saveToInflux(t time.Duration) {
-	tk := time.NewTicker(t)
-	for {
-		select {
-		case <-tk.C:
-			err := ns.saveNodesCount()
-			if err != nil {
-				log.Printf("[INFLX] Cannot save node counters to influx: %v\r\n", err)
-			}
-		}
-	}
-}
-
-func (ns *nodeStorage) getNodesCountFields() map[string]interface{} {
-	return map[string]interface{}{
-		"hubs":           ns.getHubCount(),
-		"hubs_available": ns.getAvailableHubCount(),
-		"workers":        ns.getWorkerCount(),
-	}
-}
-
-func (ns *nodeStorage) getNodesCoordinatesPoints() ([]*inf.Point, error) {
-	ns.mx.RLock()
-	defer ns.mx.RUnlock()
-
-	points := make([]*inf.Point, 0, len(ns.hubs))
-	for _, h := range ns.hubs {
-		tags := map[string]string{}
-		fields := map[string]interface{}{
-			"geo":   geohash.Encode(h.Pos.Lat, h.Pos.Lon),
-			"place": h.Pos.City,
-		}
-
-		pt, err := inf.NewPoint("nodes_map", tags, fields, time.Now())
-		if err != nil {
-			return nil, err
-		}
-
-		points = append(points, pt)
-	}
-
-	return points, nil
-}
-
-func (ns *nodeStorage) saveNodesCount() error {
-	// build coordinates points
-	coPoints, err := ns.getNodesCoordinatesPoints()
-	if err != nil {
-		return err
-	}
-
-	bp, err := inf.NewBatchPoints(inf.BatchPointsConfig{
-		Database:  influxdbDB,
-		Precision: "s",
-	})
-	if err != nil {
-		return err
-	}
-
-	// Create count point
-	tags := map[string]string{}
-	fields := ns.getNodesCountFields()
-
-	pt, err := inf.NewPoint("network", tags, fields, time.Now())
-	if err != nil {
-		return err
-	}
-
-	bp.AddPoint(pt)
-	bp.AddPoints(coPoints)
-
-	// Write the batch
-	if err := infClient.Write(bp); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // todo: implement cleanup for expired nodes
-//func (ns *nodeStorage) cleanExpiredNodes() {
+//func (ns *inMemNodeStorage) cleanExpiredNodes() {
 //	t := time.NewTicker(hubInfoCleanupPeriod)
 //	defer t.Stop()
 //
@@ -283,13 +193,11 @@ func (ns *nodeStorage) saveNodesCount() error {
 //	}
 //}
 
-func newNodeStorage() *nodeStorage {
-	ns := &nodeStorage{
+func newNodeStorage() *inMemNodeStorage {
+	ns := &inMemNodeStorage{
 		mx:   sync.RWMutex{},
 		hubs: make(map[string]*hub),
 	}
-
-	go ns.saveToInflux(influxdbSavePeriod)
 
 	return ns
 }
@@ -309,7 +217,7 @@ func startP2PServer() *frd.Server {
 	return p2p
 }
 
-func startHubDiscovery(p2p *frd.Server, storage *nodeStorage) {
+func startHubDiscovery(p2p *frd.Server, storage *inMemNodeStorage) {
 	hubChan := make(chan *hub)
 	p2p.Frd.AddHandling(nil, nil, func(msg *whisperv2.Message) {
 		hubKey := msg.Recover()
@@ -335,20 +243,22 @@ func startHubDiscovery(p2p *frd.Server, storage *nodeStorage) {
 		case <-t.C:
 			p2p.Frd.Send(p2p.GetPubKeyString(), true, common.TopicHubDiscover)
 		case <-show.C:
-			log.Printf("[!!!] Hubs: %d  Wrk: %d\r\n", storage.getHubCount(), storage.getWorkerCount())
+			hubCount, _ := storage.GetHubsCount()
+			workerCount, _ := storage.GetWorkersCount()
+			log.Printf("[!!!] Hubs: %d  Wrk: %d\r\n", hubCount, workerCount)
 			log.Println(string(storage.dump()))
 		}
 	}
 }
 
-func checkAndStore(h *hub, storage *nodeStorage) {
+func checkAndStore(h *hub, storage *inMemNodeStorage) {
 	isAvailable := checkHubAvailability(h)
 	h.Available = isAvailable
 	if isAvailable {
 		h.Workers = queryWorkers(h)
 	}
 
-	storage.PutHub(h)
+	storage.StoreHub(h)
 }
 
 func checkHubAvailability(h *hub) bool {
@@ -424,21 +334,7 @@ func queryGeoIP(s string) (*pos, error) {
 	}, nil
 }
 
-func initInfluxClient() {
-	// Create a new HTTPClient
-	var err error
-	infClient, err = inf.NewHTTPClient(inf.HTTPConfig{
-		Addr:     influxdbAddr,
-		Username: influxdbUser,
-		Password: influxdbPassword,
-	})
-	if err != nil {
-		panic("Cannot init influx client: " + err.Error())
-	}
-}
-
 func main() {
-	initInfluxClient()
 	geodb = initGeoDB()
 	defer geodb.Close()
 
