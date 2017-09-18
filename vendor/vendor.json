@@ -460,16 +460,16 @@
 			"revisionTime": "2017-09-11T07:38:22Z"
 		},
 		{
-			"checksumSHA1": "wv4WekcL+tb3YNyxZoWFu3jUFUQ=",
+			"checksumSHA1": "eG5x+tYrJl2t9qxZdpejN2SArW4=",
 			"path": "github.com/sonm-io/core/fusrodah",
-			"revision": "a6399704d259e9ff8ffd7224d804ffdcf49aa6c1",
-			"revisionTime": "2017-09-11T07:38:22Z"
+			"revision": "7a4ea3a84a2f166c9b88528dbbf1587997f67a5b",
+			"revisionTime": "2017-09-18T13:14:37Z"
 		},
 		{
-			"checksumSHA1": "9fPQSmG+Q8ge2foDz8IvBxvYzwo=",
+			"checksumSHA1": "gmifRze61Sl72mUuRGUvHo6GRB8=",
 			"path": "github.com/sonm-io/core/fusrodah/miner",
-			"revision": "a6399704d259e9ff8ffd7224d804ffdcf49aa6c1",
-			"revisionTime": "2017-09-11T07:38:22Z"
+			"revision": "7a4ea3a84a2f166c9b88528dbbf1587997f67a5b",
+			"revisionTime": "2017-09-18T13:14:37Z"
 		},
 		{
 			"checksumSHA1": "mvJMLvcM9llfC7USbe+cyXnkDmA=",
