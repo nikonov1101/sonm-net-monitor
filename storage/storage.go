@@ -24,7 +24,7 @@ var (
 	geodb *geo.Reader
 )
 
-func init() {
+func initGeodb() {
 	db, err := geo.Open("geo.mmdb")
 	if err != nil {
 		panic("Cannot open geoip db: " + err.Error())
@@ -199,16 +199,18 @@ func (ns *inMemNodeStorage) traverseAndClean() {
 }
 
 type StorageConfig struct {
-	NodeTTL       time.Duration
-	CleanupPeriod time.Duration
-	QueryGeoIP    bool
+	NodeTTL        time.Duration
+	CleanupPeriod  time.Duration
+	QueryGeoIP     bool
+	CleanupEnabled bool
 }
 
 func DefaultStorageConfig() *StorageConfig {
 	return &StorageConfig{
-		QueryGeoIP:    true,
-		NodeTTL:       defaultNodeTTL,
-		CleanupPeriod: defaultCleanupPeriod,
+		QueryGeoIP:     true,
+		CleanupEnabled: true,
+		NodeTTL:        defaultNodeTTL,
+		CleanupPeriod:  defaultCleanupPeriod,
 	}
 }
 
@@ -219,7 +221,14 @@ func NewNodeStorage(config *StorageConfig) NodeStorage {
 		config: config,
 	}
 
-	go ns.cleanExpiredNodes()
+	if config.QueryGeoIP {
+		initGeodb()
+	}
+
+	if config.CleanupEnabled {
+		go ns.cleanExpiredNodes()
+	}
+
 	return ns
 }
 
