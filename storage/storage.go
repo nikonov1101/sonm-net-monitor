@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"strings"
 
+	"log"
+
 	geo "github.com/oschwald/geoip2-golang"
 )
 
 const (
-	defaultNodeTTL       = 1 * time.Minute
-	defaultCleanupPeriod = 30 * time.Second
+	defaultNodeTTL       = 10 * time.Minute
+	defaultCleanupPeriod = 5 * time.Minute
 )
 
 var (
@@ -44,6 +46,7 @@ type Hub struct {
 	Workers   []*Worker        `json:"workers"`
 	Pos       *Pos             `json:"geo"`
 	PubKey    *ecdsa.PublicKey `json:"-"`
+	ts        time.Time
 }
 
 type Worker struct {
@@ -93,6 +96,8 @@ func (ns *inMemNodeStorage) StoreHub(h *Hub) error {
 	ns.mx.Lock()
 	defer ns.mx.Unlock()
 
+	now := time.Now()
+	h.ts = now
 	h2, ok := ns.hubs[h.Addr]
 	if !ok {
 		// if Hub doesn't exists in storage - query for geoIP and save it
@@ -104,6 +109,7 @@ func (ns *inMemNodeStorage) StoreHub(h *Hub) error {
 		ns.hubs[h.Addr] = h
 	} else {
 		// if Hub already present in storage - update fields that can be changed and save record back
+		h2.ts = now
 		h2.Workers = h.Workers
 		h2.Available = h.Available
 		h2.PubKey = h.PubKey
@@ -166,30 +172,31 @@ func (ns *inMemNodeStorage) getAvailableHubCount() int {
 	return c
 }
 
-// todo(sshaman1101): implement cleanup for expired nodes
-//func (ns *inMemNodeStorage) cleanExpiredNodes() {
-//	t := time.NewTicker(defaultCleanupPeriod)
-//	defer t.Stop()
-//
-//	ns.mx.Lock()
-//	defer ns.mx.Unlock()
-//
-//	deadline := time.Now().Add(-1 * defaultNodeTTL)
-//
-//	for {
-//		select {
-//		case <-t.C:
-//			for h := range ns.hubs {
-//				if h.ts.Before(deadline) {
-//					log.Printf("Deadlive reached for Hub = %s\r\n", h.Addr)
-//					// todo: remove node
-//				} else {
-//					log.Printf("Hub %s has at least %s to expiration\r\n", h.Addr, h.ts.Sub(deadline))
-//				}
-//			}
-//		}
-//	}
-//}
+func (ns *inMemNodeStorage) cleanExpiredNodes() {
+	t := time.NewTicker(ns.config.CleanupPeriod)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-t.C:
+			ns.traverseAndClean()
+		}
+	}
+}
+
+func (ns *inMemNodeStorage) traverseAndClean() {
+	deadline := time.Now().Add(-1 * ns.config.NodeTTL)
+
+	ns.mx.Lock()
+	defer ns.mx.Unlock()
+
+	for key, hub := range ns.hubs {
+		if hub.ts.Before(deadline) {
+			log.Printf("Deadline reached for Hub = %s\r\n", hub.Addr)
+			delete(ns.hubs, key)
+		}
+	}
+}
 
 type StorageConfig struct {
 	NodeTTL       time.Duration
@@ -212,6 +219,7 @@ func NewNodeStorage(config *StorageConfig) NodeStorage {
 		config: config,
 	}
 
+	go ns.cleanExpiredNodes()
 	return ns
 }
 
